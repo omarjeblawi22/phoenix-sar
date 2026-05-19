@@ -3,11 +3,60 @@
 <package format="3">
   <name>articubot_one</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
-  <maintainer email="my_email@email.com">Josh Newans</maintainer>
-  <license>TODO: License declaration</license>
+  <description>Differential-drive robot stack: manual control, SLAM, and Nav2 navigation.
+  Hardware: Raspberry Pi 5, RPLIDAR A1, ESP32 motor controller.</description>
+  <maintainer email="omarjeblawi8@gmail.com">omar</maintainer>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Robot description and state publishing -->
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <!-- ros2_control hardware interface + controllers -->
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>diff_drive_controller</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <!-- diffdrive_arduino is built from source in the same workspace -->
+
+  <!-- Velocity multiplexing -->
+  <exec_depend>twist_mux</exec_depend>
+
+  <!-- Teleop -->
+  <exec_depend>teleop_twist_keyboard</exec_depend>
+
+  <!-- LIDAR driver -->
+  <exec_depend>rplidar_ros</exec_depend>
+
+  <!-- SLAM -->
+  <exec_depend>slam_toolbox</exec_depend>
+
+  <!-- Nav2 stack (Jazzy package names) -->
+  <exec_depend>nav2_amcl</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_planner</exec_depend>
+  <exec_depend>nav2_behaviors</exec_depend>
+  <exec_depend>nav2_bt_navigator</exec_depend>
+  <exec_depend>nav2_waypoint_follower</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
+  <exec_depend>nav2_navfn_planner</exec_depend>
+  <exec_depend>nav2_smoother</exec_depend>
+  <exec_depend>nav2_velocity_smoother</exec_depend>
+  <exec_depend>nav2_common</exec_depend>
+  <exec_depend>nav2_costmap_2d</exec_depend>
+
+  <!-- RTT/SLAM logger dependencies -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

@@ -17,7 +17,7 @@ def generate_launch_description():
 
     declare_use_sim_time_argument = DeclareLaunchArgument(
         'use_sim_time',
-        default_value='true',
+        default_value='false',
         description='Use simulation/Gazebo clock')
     declare_params_file_cmd = DeclareLaunchArgument(
         'params_file',
@@ -49,11 +49,25 @@ def generate_launch_description():
         name='slam_toolbox',
         output='screen')
 
+    lifecycle_manager_slam = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_slam',
+        output='screen',
+        parameters=[
+            {'use_sim_time': use_sim_time},
+            {'autostart': True},
+            {'node_names': ['slam_toolbox']},
+            {'bond_timeout': 0.0},
+        ]
+    )
+
     ld = LaunchDescription()
 
     ld.add_action(declare_use_sim_time_argument)
     ld.add_action(declare_params_file_cmd)
     ld.add_action(log_param_change)
     ld.add_action(start_async_slam_toolbox_node)
+    ld.add_action(lifecycle_manager_slam)
 
     return ld

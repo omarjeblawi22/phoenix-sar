@@ -1,0 +1,42 @@
+# ROS 2 build artifacts
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Map files (can be large, regenerated easily)
+maps/*.pgm
+maps/*.yaml
+maps/*.npy
+maps/*.json
+maps/camera_runs/
+
+# Datasets (large binary data)
+datasets/
+
+# Model files (binary, should be tracked separately)
+model/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Firmware build artifacts
+firmware/**/.pio/
+firmware/**/build/

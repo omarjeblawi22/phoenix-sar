@@ -33,8 +33,43 @@ if(BUILD_TESTING)
 endif()
 
 install(
-  DIRECTORY config description launch worlds
+  DIRECTORY config description launch worlds maps phoenixIMPPF
   DESTINATION share/${PROJECT_NAME}
+)
+
+# SAR autonomous exploration node
+install(PROGRAMS
+  scripts/phoenix_explorer.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME phoenix_explorer
+)
+
+# Camera target detection node (Pi Camera + TFLite)
+install(PROGRAMS
+  scripts/camera_detector_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME camera_detector
+)
+
+# Web dashboard node (serves http://<pi>:8080)
+install(PROGRAMS
+  scripts/phoenix_dashboard.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME phoenix_dashboard
+)
+
+# Web launcher node (serves http://<pi>:8081)
+install(PROGRAMS
+  scripts/phoenix_launcher.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME phoenix_launcher
+)
+
+# IMPPF dataset logger (reads XIAO ESP32-S3 via /dev/ttyACM0 + SLAM topics)
+install(PROGRAMS
+  phoenixIMPPF/phoenix_logger.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME phoenix_logger
 )
 
 ament_package()
