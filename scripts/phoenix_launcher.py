@@ -521,6 +521,10 @@ class _ProcManager:
             self._put('ALERT:clear::')
             self._put(f'>> ─── MODE: {mode.upper()} ───')
 
+            # Disable DTR/RTS hangup on ESP32 serial port to prevent reset-on-open
+            subprocess.run(['stty', '-F', '/dev/ttyUSB0', '-hupcl', 'clocal'],
+                           capture_output=True)
+
             if mode == 'manual':
                 self._launch('slam', _CMDS['slam'])
                 self._mode = 'manual'
