@@ -592,8 +592,7 @@ class _ProcManager:
             'pkill -f camera_detector 2>/dev/null; '
             'pkill -f phoenix_explorer 2>/dev/null; '
             'pkill -f phoenix_dashboard 2>/dev/null; '
-            'pkill -f phoenix_logger 2>/dev/null; '
-            'pkill -f rpicam-vid 2>/dev/null'],
+            'pkill -f phoenix_logger 2>/dev/null'],
             capture_output=True)
 
         if rtt_dir:
@@ -648,12 +647,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         try:
             if path == '/api/start':
                 mode = data.get('mode', 'manual')
-                # Camera: raw stream in manual/RTT; camera_detector handles autonomous
-                if mode in ('manual', 'rtt'):
-                    threading.Thread(target=self.node.start_raw_camera,
-                                     daemon=True).start()
-                else:
+                if mode == 'autonomous':
+                    # Autonomous uses camera_detector — stop raw feed
                     self.node.stop_raw_camera()
+                # manual/rtt: camera already running from boot — leave it alone
                 threading.Thread(target=self.pm.start_mode, args=(mode,),
                                  daemon=True).start()
                 time.sleep(0.3)
@@ -661,8 +658,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             elif path == '/api/stop':
                 threading.Thread(target=self.pm.stop_all, daemon=True).start()
                 if self.node: self.node.publish_velocity(0.0, 0.0)
-                # Camera keeps running after stop (only autonomous turns it off)
-                threading.Thread(target=self.node.start_raw_camera, daemon=True).start()
+                # Restart camera after stop_all finishes (~5s); don't race with pkill
+                node_ref = self.node
+                def _restart_cam():
+                    time.sleep(6.0)
+                    node_ref.start_raw_camera()
+                threading.Thread(target=_restart_cam, daemon=True).start()
                 time.sleep(0.3)
                 self._bytes(json.dumps({'mode': self.pm.mode}).encode(), 'application/json')
             elif path == '/api/drive':
