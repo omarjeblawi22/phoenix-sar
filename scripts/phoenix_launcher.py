@@ -916,10 +916,19 @@ class PhoenixLauncher(Node):
         except Exception as e:
             self.get_logger().warn(f'Vision model load failed: {e}')
 
+    def _speak(self, text: str):
+        """Non-blocking text-to-speech via espeak-ng."""
+        try:
+            subprocess.Popen(['espeak-ng', '-s', '130', text],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
     def _detection_worker(self):
         THRES = 0.55
         NMS   = 0.20
         VERIFY_CONF = 0.70
+        alerted = False
         while self._raw_cam_active:
             try:
                 frame = self._det_frame_q.get(timeout=1.0)
@@ -945,6 +954,15 @@ class PhoenixLauncher(Node):
             detected = (len(self._det_votes) == self._det_votes.maxlen
                         and all(self._det_votes))
             prob = sum(self._det_votes) / self._det_votes.maxlen
+            # Alert once per detection event
+            if detected and not alerted:
+                alerted = True
+                self._ui_log('>> ★ TARGET DETECTED — person confirmed!')
+                threading.Thread(target=self._speak,
+                                 args=('Target detected. Start search and rescue.',),
+                                 daemon=True).start()
+            elif not detected:
+                alerted = False
             with self._lock:
                 self._det_boxes = boxes
                 self._detected  = detected
