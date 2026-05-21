@@ -55,12 +55,14 @@ _ROS = ('source /opt/ros/jazzy/setup.bash && '
         'source /home/phoenix/ros2_ws/install/setup.bash')
 
 _CMDS = {
-    'slam': (f'{_ROS} && ros2 launch articubot_one slam_nav_launch.py '
-             'serial_port:=/dev/ttyUSB1'),
+    'slam':    (f'{_ROS} && ros2 launch articubot_one slam_nav_launch.py '
+                'serial_port:=/dev/ttyUSB1'),
     'mission': (f'{_ROS} && ros2 launch articubot_one maze_mission_launch.py '
                 'serial_port:=/dev/ttyUSB1 '
                 'model_path:=/home/phoenix/model/target_classifier_int8.tflite '
                 'metadata_path:=/home/phoenix/model/metadata.json'),
+    'circle':  f'{_ROS} && ros2 run articubot_one phoenix_circle',
+    'forward': f'{_ROS} && ros2 run articubot_one phoenix_forward',
 }
 
 _MAX_LOG = 400
@@ -128,6 +130,8 @@ header h1{color:#58a6ff;font-size:.95rem;letter-spacing:3px;white-space:nowrap}
 .bm{background:#0d419d;color:#79c0ff;border:1px solid #1f6feb}
 .ba{background:#033a16;color:#3fb950;border:1px solid #238636}
 .br{background:#4d2d00;color:#e3b341;border:1px solid #9e6a03}
+.bc{background:#2d1b69;color:#c084fc;border:1px solid #7c3aed}
+.bf{background:#0c3344;color:#67e8f9;border:1px solid #0891b2}
 .hstat{font-size:.72rem;color:#8b949e;white-space:nowrap}
 .hstat span{color:#c9d1d9}
 .prob-wrap{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:.72rem}
@@ -241,6 +245,14 @@ footer{height:90px;background:#0d1117;border-top:1px solid #30363d;display:flex;
         <span class="mn">📡  RTT DATA COLLECT</span>
         <span class="md">SLAM + FTM logger · all files auto-saved</span>
       </button>
+      <button class="mode-btn" id="btn-circle" onclick="startMode('circle')">
+        <span class="mn">⭕  CIRCLE PATROL</span>
+        <span class="md">Maps area in circles · Nav2 obstacle avoidance</span>
+      </button>
+      <button class="mode-btn" id="btn-forward" onclick="startMode('forward')">
+        <span class="mn">⬆  FORWARD 3m</span>
+        <span class="md">Navigate 3m ahead · obstacle avoidance</span>
+      </button>
       <button class="stop-btn" onclick="stopAll()">⬛  STOP ALL</button>
     </div>
 
@@ -315,8 +327,8 @@ footer{height:90px;background:#0d1117;border-top:1px solid #30363d;display:flex;
 </footer>
 
 <script>
-const BC={manual:'bm',autonomous:'ba',rtt:'br',stopped:'bs'};
-const BL={manual:'MANUAL',autonomous:'AUTONOMOUS',rtt:'RTT COLLECT',stopped:'STOPPED'};
+const BC={manual:'bm',autonomous:'ba',rtt:'br',circle:'bc',forward:'bf',stopped:'bs'};
+const BL={manual:'MANUAL',autonomous:'AUTONOMOUS',rtt:'RTT COLLECT',circle:'PATROL',forward:'FWD 3M',stopped:'STOPPED'};
 
 let curMode=null, linSpeed=0.35;
 document.getElementById('spd').addEventListener('input',function(){
@@ -363,7 +375,7 @@ function updateUI(d){
   const m=d.mode;
   const b=document.getElementById('badge');
   b.textContent=BL[m]||m.toUpperCase(); b.className='badge '+(BC[m]||'bs');
-  document.getElementById('gamepad').style.display=(m==='manual'||m==='rtt')?'block':'none';
+  document.getElementById('gamepad').style.display=(m==='manual'||m==='rtt'||m==='circle'||m==='forward')?'block':'none';
   document.querySelectorAll('.mode-btn').forEach(x=>x.classList.remove('active'));
   const ab=document.getElementById('btn-'+m); if(ab)ab.classList.add('active');
   curMode=m;
@@ -394,7 +406,7 @@ function pollStats(){
       b.textContent=BL[d.launcher_mode]||d.launcher_mode.toUpperCase();
       b.className='badge '+(BC[d.launcher_mode]||'bs');
       curMode=d.launcher_mode;
-      document.getElementById('gamepad').style.display=(curMode==='manual'||curMode==='rtt')?'block':'none';
+      document.getElementById('gamepad').style.display=(curMode==='manual'||curMode==='rtt'||curMode==='circle'||curMode==='forward')?'block':'none';
     }
     // refresh map
     document.getElementById('map-img').src='/map.png?t='+Date.now();
@@ -532,6 +544,20 @@ class _ProcManager:
             elif mode == 'autonomous':
                 self._launch('mission', _CMDS['mission'])
                 self._mode = 'autonomous'
+
+            elif mode == 'circle':
+                self._launch('slam', _CMDS['slam'])
+                time.sleep(3.0)   # let ros2_control start before spawning Nav2 client
+                self._launch('circle', _CMDS['circle'])
+                self._mode = 'circle'
+                self._put('>> Circle patrol: waiting for Nav2 to activate (~20s)...')
+
+            elif mode == 'forward':
+                self._launch('slam', _CMDS['slam'])
+                time.sleep(3.0)
+                self._launch('forward', _CMDS['forward'])
+                self._mode = 'forward'
+                self._put('>> Forward nav: waiting for Nav2 to activate (~20s)...')
 
             elif mode == 'rtt':
                 ts  = datetime.now().strftime('run_%Y%m%d_%H%M%S')

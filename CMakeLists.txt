@@ -65,6 +65,20 @@ install(PROGRAMS
   RENAME phoenix_launcher
 )
 
+# Circle patrol node
+install(PROGRAMS
+  scripts/phoenix_circle.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME phoenix_circle
+)
+
+# Forward navigation node (3m ahead, obstacle avoiding)
+install(PROGRAMS
+  scripts/phoenix_forward.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME phoenix_forward
+)
+
 # IMPPF dataset logger (reads XIAO ESP32-S3 via /dev/ttyACM0 + SLAM topics)
 install(PROGRAMS
   phoenixIMPPF/phoenix_logger.py
