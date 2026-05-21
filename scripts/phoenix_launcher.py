@@ -25,6 +25,7 @@ import http.server
 import json
 import math
 import queue
+import re
 import shutil
 import socketserver
 import subprocess
@@ -63,6 +64,46 @@ _CMDS = {
 }
 
 _MAX_LOG = 400
+
+# ── Alert rules ───────────────────────────────────────────────────────────────
+# (compiled_regex, level, key, human_message)
+# level: 'error' | 'warn' | 'ok'
+_ALERT_RULES = [
+    # XIAO / RTT logger
+    (re.compile(r'could not open port /dev/ttyACM0|No such file.*ttyACM0'),
+     'error', 'xiao_missing',
+     'XIAO not plugged in — RTT data will NOT be collected. Plug in the XIAO ESP32-S3.'),
+    (re.compile(r'Serial open: /dev/ttyACM0'),
+     'ok', 'xiao_ok', 'XIAO connected — RTT ranging active'),
+
+    # LIDAR
+    (re.compile(r'RPLIDAR S/N:'),
+     'ok', 'lidar_ok', 'LIDAR online and scanning'),
+    (re.compile(r'Failed to activate local_costmap because transform from base_link to map'),
+     'error', 'lidar_no_tf',
+     'LIDAR not scanning — USB ports probably swapped. Unplug both USB cables, replug ESP32 first, then LIDAR.'),
+
+    # Nav2
+    (re.compile(r'Aborting bringup'),
+     'warn', 'nav2_abort', 'Nav2 failed to start (caused by LIDAR issue above)'),
+    (re.compile(r'lifecycle_manager_navigation.*Managed nodes are active'),
+     'ok', 'nav2_ok', 'SLAM + Nav2 fully active'),
+
+    # Motor controller
+    (re.compile(r'DiffDriveArduinoHardware.*Successfully activated'),
+     'ok', 'motors_ok', 'Motor controller connected'),
+    (re.compile(r'ReadByte.*timeout', re.IGNORECASE),
+     'warn', 'esp32_timeout',
+     'ESP32 motor timeout — power cycle the ESP32 USB cable'),
+    (re.compile(r'could not open port /dev/ttyUSB0|No such file.*ttyUSB0'),
+     'error', 'motors_missing',
+     'ESP32 motor controller not found on /dev/ttyUSB0'),
+
+    # Camera
+    (re.compile(r'rpicam-vid.*[Ee]rror|[Cc]annot open.*camera|no devices found', re.IGNORECASE),
+     'error', 'camera_error',
+     'Camera failed — check Pi Camera ribbon cable'),
+]
 
 
 # ── Embedded HTML/CSS/JS ──────────────────────────────────────────────────────
@@ -153,6 +194,20 @@ footer{height:90px;background:#0d1117;border-top:1px solid #30363d;display:flex;
     font-size:.58rem;letter-spacing:2px;color:#58a6ff;font-weight:bold}
 #log{flex:1;overflow-y:auto;padding:4px 10px;font-size:.65rem;line-height:1.5;color:#6e7681}
 #log .err{color:#f85149}#log .ok{color:#3fb950}#log .inf{color:#58a6ff}
+
+/* ── Alert bar ── */
+#alerts{flex-shrink:0;display:flex;flex-direction:column;gap:2px;padding:0}
+#alerts:empty{display:none}
+.al{display:flex;align-items:center;gap:8px;padding:5px 12px;font-size:.72rem;
+    border-left:4px solid;animation:alin .2s}
+@keyframes alin{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.al.err{background:#2d0a0a;border-color:#f85149;color:#ffa198}
+.al.wrn{background:#2d1e00;border-color:#e3b341;color:#f0c000}
+.al.ok {background:#0d2818;border-color:#3fb950;color:#56d364}
+.al .ali{font-size:.85rem;flex-shrink:0}
+.al .alm{flex:1}
+.al .alx{cursor:pointer;padding:0 4px;opacity:.5;font-size:.9rem;flex-shrink:0}
+.al .alx:hover{opacity:1}
 </style>
 </head>
 <body>
@@ -166,6 +221,8 @@ footer{height:90px;background:#0d1117;border-top:1px solid #30363d;display:flex;
     <div class="pb-bg"><div id="h-pb" class="pb-fill" style="width:0%"></div></div>
   </div>
 </header>
+
+<div id="alerts"></div>
 
 <main>
   <!-- ── Controls ── -->
@@ -345,12 +402,45 @@ function pollStats(){
 }
 setInterval(pollStats,1000); pollStats();
 
-// SSE log stream
+// ── Alert system ──
+const ALERT_ICONS={error:'✕',warn:'⚠',ok:'✓'};
+const ALERT_CLEARS={xiao_ok:['xiao_missing'],lidar_ok:['lidar_no_tf','nav2_abort'],
+                    motors_ok:['motors_missing','esp32_timeout'],nav2_ok:['nav2_abort']};
+const alertsDiv=document.getElementById('alerts');
+
+function showAlert(level,key,msg){
+  // clear any superseded alerts
+  (ALERT_CLEARS[key]||[]).forEach(k=>{
+    const old=document.getElementById('al-'+k); if(old)old.remove();
+  });
+  // remove existing same-key alert
+  const ex=document.getElementById('al-'+key); if(ex)ex.remove();
+  const el=document.createElement('div');
+  const cls={error:'err',warn:'wrn',ok:'ok'}[level]||'ok';
+  el.className='al '+cls; el.id='al-'+key;
+  el.innerHTML=`<span class="ali">${ALERT_ICONS[level]||'•'}</span>`+
+               `<span class="alm">${msg}</span>`+
+               `<span class="alx" onclick="this.parentElement.remove()">×</span>`;
+  alertsDiv.appendChild(el);
+  if(level==='ok') setTimeout(()=>el.remove(),7000);
+}
+
+function clearAlerts(){ alertsDiv.innerHTML=''; }
+
+// ── SSE log stream ──
 const es=new EventSource('/api/log');
 const logDiv=document.getElementById('log');
 es.onmessage=e=>{
-  const s=document.createElement('span');
   const t=e.data;
+  // handle alert signals
+  if(t.startsWith('ALERT:')){
+    const parts=t.split(':');
+    const level=parts[1], key=parts[2], msg=parts.slice(3).join(':');
+    if(level==='clear'){ clearAlerts(); return; }
+    showAlert(level,key,msg); return;
+  }
+  // normal log line
+  const s=document.createElement('span');
   if(t.includes('[ERROR]')||t.includes('error')||t.includes('Error'))s.className='err';
   else if(t.includes('[INFO]')||t.includes('active')||t.includes('successfully')||t.startsWith('>>'))s.className=t.startsWith('>>')?'inf':'ok';
   s.textContent=t;
@@ -374,6 +464,7 @@ class _ProcManager:
         self._log:   queue.Queue = queue.Queue(maxsize=600)
         self._mode   = 'stopped'
         self._rtt_dir: str = ''
+        self._alerted: set = set()           # alert keys fired this session
 
     def _put(self, line: str):
         try:
@@ -385,12 +476,22 @@ class _ProcManager:
             except queue.Empty:
                 pass
 
+    def _check_alerts(self, line: str):
+        for pattern, level, key, msg in _ALERT_RULES:
+            if key in self._alerted:
+                continue
+            if pattern.search(line):
+                self._alerted.add(key)
+                self._put(f'ALERT:{level}:{key}:{msg}')
+                break
+
     def _tail(self, name: str, proc):
         for line in proc.stdout:
             l = line.rstrip()
             if 'Timed out waiting for transform' in l:
                 continue
             self._put(f'[{name}] {l}')
+            self._check_alerts(l)
         self._put(f'>> [{name}] exited.')
 
     def _launch(self, name: str, cmd: str):
@@ -416,6 +517,8 @@ class _ProcManager:
         try:
             self.stop_all()
             time.sleep(2.5)   # wait for ports/PIDs to fully release
+            self._alerted.clear()
+            self._put('ALERT:clear::')
             self._put(f'>> ─── MODE: {mode.upper()} ───')
 
             if mode == 'manual':
