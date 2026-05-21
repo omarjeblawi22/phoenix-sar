@@ -658,9 +658,10 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 time.sleep(0.3)
                 self._bytes(json.dumps({'mode': self.pm.mode}).encode(), 'application/json')
             elif path == '/api/stop':
-                self.node.stop_raw_camera()
                 threading.Thread(target=self.pm.stop_all, daemon=True).start()
                 if self.node: self.node.publish_velocity(0.0, 0.0)
+                # Camera keeps running after stop (only autonomous turns it off)
+                threading.Thread(target=self.node.start_raw_camera, daemon=True).start()
                 time.sleep(0.3)
                 self._bytes(json.dumps({'mode': self.pm.mode}).encode(), 'application/json')
             elif path == '/api/drive':
@@ -1065,6 +1066,9 @@ def main(args=None):
     _Handler.node = node
     _Handler.pm   = pm
     node._ui_log  = pm._put   # lets the ROS node write to the web UI log
+
+    # Camera runs whenever the UI is up (stops only during autonomous mode)
+    threading.Thread(target=node.start_raw_camera, daemon=True).start()
 
     server = _ThreadedServer(('0.0.0.0', 8081), _Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
