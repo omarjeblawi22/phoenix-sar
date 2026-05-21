@@ -592,7 +592,8 @@ class _ProcManager:
             'pkill -f camera_detector 2>/dev/null; '
             'pkill -f phoenix_explorer 2>/dev/null; '
             'pkill -f phoenix_dashboard 2>/dev/null; '
-            'pkill -f phoenix_logger 2>/dev/null'],
+            'pkill -f phoenix_logger 2>/dev/null; '
+            'pkill -f rpicam-vid 2>/dev/null'],
             capture_output=True)
 
         if rtt_dir:
@@ -926,13 +927,23 @@ class PhoenixLauncher(Node):
             except Exception:
                 pass
             self._raw_cam_proc = None
+        # Kill any orphan rpicam-vid from a previous launcher session
+        subprocess.run(['pkill', '-f', 'rpicam-vid'], capture_output=True)
+
+    # Noisy V4L2 buffer warnings that appear under load — not user-actionable
+    _CAM_NOISE = re.compile(
+        r'Failed to queue buffer|RPISTREAM|V4L2 pixel format|'
+        r'libcamera v|libpisp|pisp\.cpp|Using tuning file|'
+        r'Adding camera|Registered camera|Resizing costmap|'
+        r'Mode selection|Score:|Stream configuration|configuring streams|'
+        r'Selected sensor|Halting:|INFO |WARN ')
 
     def _raw_cam_stderr(self):
-        """Forward rpicam-vid stderr to the web UI log so errors are visible."""
+        """Forward rpicam-vid fatal errors to the web UI log (filters V4L2 noise)."""
         try:
             for line in self._raw_cam_proc.stderr:
                 l = line.rstrip().decode('utf-8', errors='replace')
-                if l:
+                if l and not self._CAM_NOISE.search(l):
                     self._ui_log(f'[camera] {l}')
         except Exception:
             pass
