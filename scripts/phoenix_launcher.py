@@ -929,11 +929,18 @@ class PhoenixLauncher(Node):
         NMS   = 0.20
         VERIFY_CONF = 0.70
         alerted = False
+        last_infer = 0.0
+        INFER_INTERVAL = 2.0  # seconds between inferences — keeps CPU free for motors
         while self._raw_cam_active:
             try:
                 frame = self._det_frame_q.get(timeout=1.0)
             except queue.Empty:
                 continue
+            # Rate-limit: skip frames until interval has passed
+            now = time.time()
+            if now - last_infer < INFER_INTERVAL:
+                continue
+            last_infer = now
             try:
                 ids, confs, bboxes = self._det_net.detect(
                     frame, confThreshold=THRES, nmsThreshold=NMS)
