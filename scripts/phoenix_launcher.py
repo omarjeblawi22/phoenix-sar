@@ -906,7 +906,8 @@ class PhoenixLauncher(Node):
         try:
             self._raw_cam_proc = subprocess.Popen(
                 [rpicam, '-t', '0', '--codec', 'mjpeg', '-o', '-',
-                 '--width', '640', '--height', '480', '--nopreview', '--flush'],
+                 '--width', '640', '--height', '480', '--framerate', '10',
+                 '--nopreview', '--flush'],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
             )
         except Exception as e:
