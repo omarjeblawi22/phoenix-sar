@@ -31,6 +31,7 @@ import socketserver
 import subprocess
 import threading
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -761,6 +762,14 @@ class PhoenixLauncher(Node):
         self._raw_cam_active = False
         self._ui_log = lambda msg: None  # replaced by pm._put after init
 
+        # ── person detection (SSD MobileNet v3, OpenCV DNN) ───────────────────
+        self._det_net          = None
+        self._det_classes: list = []
+        self._det_votes        = deque(maxlen=5)
+        self._det_boxes: list  = []   # [(box, conf)] from last inference
+        self._det_frame_q      = queue.Queue(maxsize=1)
+        self._load_det_model()
+
         # ── TF ─────────────────────────────────────────────────────────────────
         self.tf_buf = tf2_ros.Buffer(cache_time=Duration(seconds=10.0))
         self.tf_lst = tf2_ros.TransformListener(self.tf_buf, self)
@@ -884,6 +893,63 @@ class PhoenixLauncher(Node):
 
     # ── map rendering ──────────────────────────────────────────────────────────
 
+    # ── person detection ──────────────────────────────────────────────────────
+
+    _MODEL_DIR = Path('/home/phoenix/model')
+
+    def _load_det_model(self):
+        cfg     = self._MODEL_DIR / 'ssd_mobilenet_v3_large_coco_2020_01_14.pbtxt'
+        weights = self._MODEL_DIR / 'frozen_inference_graph.pb'
+        names   = self._MODEL_DIR / 'coco.names'
+        if not (cfg.exists() and weights.exists() and names.exists()):
+            self.get_logger().info('Vision model not found — detection disabled in manual/RTT.')
+            return
+        try:
+            net = cv2.dnn_DetectionModel(str(weights), str(cfg))
+            net.setInputSize(320, 320)
+            net.setInputScale(1.0 / 127.5)
+            net.setInputMean((127.5, 127.5, 127.5))
+            net.setInputSwapRB(True)
+            self._det_net     = net
+            self._det_classes = names.read_text().strip().split('\n')
+            self.get_logger().info('Vision model loaded — person detection active.')
+        except Exception as e:
+            self.get_logger().warn(f'Vision model load failed: {e}')
+
+    def _detection_worker(self):
+        THRES = 0.55
+        NMS   = 0.20
+        VERIFY_CONF = 0.70
+        while self._raw_cam_active:
+            try:
+                frame = self._det_frame_q.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            try:
+                ids, confs, bboxes = self._det_net.detect(
+                    frame, confThreshold=THRES, nmsThreshold=NMS)
+            except Exception:
+                continue
+            boxes = []
+            person_verified = False
+            if ids is not None and len(ids):
+                for cid, conf, box in zip(ids.flatten(), confs.flatten(), bboxes):
+                    idx = int(cid) - 1
+                    name = self._det_classes[idx].lower() if idx < len(self._det_classes) else ''
+                    conf_v = float(conf)
+                    if name == 'person':
+                        boxes.append((box, conf_v))
+                        if conf_v >= VERIFY_CONF:
+                            person_verified = True
+            self._det_votes.append(person_verified)
+            detected = (len(self._det_votes) == self._det_votes.maxlen
+                        and all(self._det_votes))
+            prob = sum(self._det_votes) / self._det_votes.maxlen
+            with self._lock:
+                self._det_boxes = boxes
+                self._detected  = detected
+                self._prob      = prob
+
     # ── raw camera streaming (no TFLite — used in manual / RTT modes) ────────
 
     def start_raw_camera(self):
@@ -913,9 +979,14 @@ class PhoenixLauncher(Node):
             self.get_logger().warn(msg)
             return
         self._raw_cam_active = True
+        self._det_votes.clear()
         threading.Thread(target=self._raw_cam_reader, daemon=True).start()
         threading.Thread(target=self._raw_cam_stderr, daemon=True).start()
-        self._ui_log('>> Camera stream started.')
+        if self._det_net is not None:
+            threading.Thread(target=self._detection_worker, daemon=True).start()
+            self._ui_log('>> Camera stream started (person detection active).')
+        else:
+            self._ui_log('>> Camera stream started.')
 
     def stop_raw_camera(self):
         self._raw_cam_active = False
@@ -973,12 +1044,47 @@ class PhoenixLauncher(Node):
                 frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                 if frame is not None:
                     frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+                    # Feed to detection worker (non-blocking, drops stale frame)
+                    if self._det_net is not None:
+                        try:
+                            self._det_frame_q.put_nowait(frame.copy())
+                        except queue.Full:
+                            pass
                     h, w = frame.shape[:2]
-                    # Minimal "LIVE" overlay — no detection running
-                    cv2.rectangle(frame, (0, 0), (w, 26), (15, 15, 40), -1)
-                    cv2.putText(frame, 'CAMERA LIVE', (8, 18),
+                    # Draw person detection boxes from last inference
+                    with self._lock:
+                        boxes   = list(self._det_boxes)
+                        det_now = self._detected
+                    for (x, y, bw, bh), conf_v in boxes:
+                        color = (0, 0, 255) if det_now else (0, 165, 255)
+                        cv2.rectangle(frame, (x, y), (x+bw, y+bh), color, 3)
+                        L = 16
+                        for px, py in [(x,y),(x+bw,y),(x,y+bh),(x+bw,y+bh)]:
+                            dx = L if px == x else -L
+                            dy = L if py == y else -L
+                            cv2.line(frame,(px,py),(px+dx,py),color,3)
+                            cv2.line(frame,(px,py),(px,py+dy),color,3)
+                        lbl = f"VICTIM {round(conf_v*100,1)}%"
+                        cv2.rectangle(frame,(x, max(y-24,0)),(x+130,y),color,-1)
+                        cv2.putText(frame,lbl,(x+4,max(y-6,14)),
+                                    cv2.FONT_HERSHEY_SIMPLEX,0.5,(255,255,255),1,cv2.LINE_AA)
+                    # Status bar
+                    votes = int(sum(self._det_votes))
+                    maxv  = self._det_votes.maxlen
+                    if det_now:
+                        bar_txt = 'TARGET CONFIRMED'
+                        bar_col = (0, 0, 200)
+                    elif self._det_net is not None:
+                        bar_txt = f'Scanning  {votes}/{maxv}'
+                        bar_col = (15, 15, 40)
+                    else:
+                        bar_txt = 'CAMERA LIVE'
+                        bar_col = (15, 15, 40)
+                    cv2.rectangle(frame, (0, 0), (w, 26), bar_col, -1)
+                    cv2.putText(frame, bar_txt, (8, 18),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.55,
-                                (100, 200, 255), 1, cv2.LINE_AA)
+                                (0, 0, 255) if det_now else (100, 200, 255),
+                                1, cv2.LINE_AA)
                     ok, buf2 = cv2.imencode('.jpg', frame,
                                            [cv2.IMWRITE_JPEG_QUALITY, 72])
                     if ok:
