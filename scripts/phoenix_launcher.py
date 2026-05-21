@@ -760,6 +760,7 @@ class PhoenixLauncher(Node):
         # ── raw camera (for manual/RTT when camera_detector isn't running) ──
         self._raw_cam_proc   = None
         self._raw_cam_active = False
+        self._ui_log = lambda msg: None  # replaced by pm._put after init
 
         # ── TF ─────────────────────────────────────────────────────────────────
         self.tf_buf = tf2_ros.Buffer(cache_time=Duration(seconds=10.0))
@@ -889,24 +890,32 @@ class PhoenixLauncher(Node):
     def start_raw_camera(self):
         """Open rpicam-vid directly when camera_detector isn't running."""
         self.stop_raw_camera()
-        rpicam = (shutil.which('rpicam-vid') or
-                  '/usr/local/bin/rpicam-vid' or
-                  '/usr/bin/rpicam-vid')
-        if not Path(rpicam).exists():
-            self.get_logger().warn('rpicam-vid not found — camera offline in this mode.')
+        rpicam = shutil.which('rpicam-vid')
+        if rpicam is None:
+            for p in ('/usr/bin/rpicam-vid', '/usr/local/bin/rpicam-vid'):
+                if Path(p).exists():
+                    rpicam = p
+                    break
+        if not rpicam:
+            msg = '>> Camera: rpicam-vid not found — check Pi Camera is enabled'
+            self._ui_log(msg)
+            self.get_logger().warn(msg)
             return
         try:
             self._raw_cam_proc = subprocess.Popen(
                 [rpicam, '-t', '0', '--codec', 'mjpeg', '-o', '-',
                  '--width', '640', '--height', '480', '--nopreview', '--flush'],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
             )
         except Exception as e:
-            self.get_logger().warn(f'rpicam-vid failed: {e}')
+            msg = f'>> Camera: rpicam-vid launch failed — {e}'
+            self._ui_log(msg)
+            self.get_logger().warn(msg)
             return
         self._raw_cam_active = True
         threading.Thread(target=self._raw_cam_reader, daemon=True).start()
-        self.get_logger().info('Raw camera stream started.')
+        threading.Thread(target=self._raw_cam_stderr, daemon=True).start()
+        self._ui_log('>> Camera stream started.')
 
     def stop_raw_camera(self):
         self._raw_cam_active = False
@@ -916,6 +925,16 @@ class PhoenixLauncher(Node):
             except Exception:
                 pass
             self._raw_cam_proc = None
+
+    def _raw_cam_stderr(self):
+        """Forward rpicam-vid stderr to the web UI log so errors are visible."""
+        try:
+            for line in self._raw_cam_proc.stderr:
+                l = line.rstrip().decode('utf-8', errors='replace')
+                if l:
+                    self._ui_log(f'[camera] {l}')
+        except Exception:
+            pass
 
     def _raw_cam_reader(self):
         SOI = b'\xff\xd8'
@@ -1045,6 +1064,7 @@ def main(args=None):
 
     _Handler.node = node
     _Handler.pm   = pm
+    node._ui_log  = pm._put   # lets the ROS node write to the web UI log
 
     server = _ThreadedServer(('0.0.0.0', 8081), _Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
