@@ -975,6 +975,7 @@ class PhoenixLauncher(Node):
                 arr  = np.frombuffer(jpeg, np.uint8)
                 frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
                 if frame is not None:
+                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
                     h, w = frame.shape[:2]
                     # Minimal "LIVE" overlay — no detection running
                     cv2.rectangle(frame, (0, 0), (w, 26), (15, 15, 40), -1)
