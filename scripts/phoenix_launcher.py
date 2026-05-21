@@ -647,23 +647,19 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         try:
             if path == '/api/start':
                 mode = data.get('mode', 'manual')
-                if mode == 'autonomous':
-                    # Autonomous uses camera_detector — stop raw feed
+                if mode in ('manual', 'rtt'):
+                    threading.Thread(target=self.node.start_raw_camera,
+                                     daemon=True).start()
+                else:
                     self.node.stop_raw_camera()
-                # manual/rtt: camera already running from boot — leave it alone
                 threading.Thread(target=self.pm.start_mode, args=(mode,),
                                  daemon=True).start()
                 time.sleep(0.3)
                 self._bytes(json.dumps({'mode': self.pm.mode}).encode(), 'application/json')
             elif path == '/api/stop':
+                self.node.stop_raw_camera()
                 threading.Thread(target=self.pm.stop_all, daemon=True).start()
                 if self.node: self.node.publish_velocity(0.0, 0.0)
-                # Restart camera after stop_all finishes (~5s); don't race with pkill
-                node_ref = self.node
-                def _restart_cam():
-                    time.sleep(6.0)
-                    node_ref.start_raw_camera()
-                threading.Thread(target=_restart_cam, daemon=True).start()
                 time.sleep(0.3)
                 self._bytes(json.dumps({'mode': self.pm.mode}).encode(), 'application/json')
             elif path == '/api/drive':
@@ -1080,9 +1076,6 @@ def main(args=None):
     _Handler.node = node
     _Handler.pm   = pm
     node._ui_log  = pm._put   # lets the ROS node write to the web UI log
-
-    # Camera runs whenever the UI is up (stops only during autonomous mode)
-    threading.Thread(target=node.start_raw_camera, daemon=True).start()
 
     server = _ThreadedServer(('0.0.0.0', 8081), _Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
